@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Trading Bot Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+</head>
+<body>
+    <h1>Trading Bot Dashboard</h1>
+    <p>Assets: {{ assets|join(', ') }}</p>
+    <canvas id="portfolioChart" width="400" height="200"></canvas>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            drawChart("portfolioChart", [10000, 10100, 10200], ["2023-01-01", "2023-01-02", "2023-01-03"]);
+        });
+    </script>
+</body>
+</html>

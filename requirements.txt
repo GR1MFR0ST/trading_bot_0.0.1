@@ -1,0 +1,10 @@
+requests
+pandas
+talib-binary
+scikit-learn
+backtrader
+sqlalchemy
+boto3
+flask
+telegram
+pytest

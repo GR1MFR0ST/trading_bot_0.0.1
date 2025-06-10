@@ -1,0 +1,14 @@
+stages:
+  - test
+  - deploy
+
+test:
+  stage: test
+  script:
+    - pytest tests/
+
+deploy:
+  stage: deploy
+  script:
+    - docker build -t trading-bot .
+    - docker push trading-bot

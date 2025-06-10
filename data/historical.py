@@ -16,7 +16,7 @@ class HistoricalDataFetcher:
             config: Config object with BITQUERY_API_KEY.
         """
         self.config = config
-        self.bitquery_url = "https://graphql.bitquery.io"
+        self.bitquery_url = "[invalid url, do not cite]
         self.transport = RequestsHTTPTransport(
             url=self.bitquery_url,
             headers={"X-API-KEY": self.config.BITQUERY_API_KEY}

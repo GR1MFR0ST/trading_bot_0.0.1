@@ -16,8 +16,8 @@ class RealtimeDataFetcher:
         Args:
             config: Config object with BITQUERY_API_KEY.
         """
-        self.jupiter_url = "https://price.jup.ag/v4/price"
-        self.bitquery_url = "https://graphql.bitquery.io"
+        self.jupiter_url = "[invalid url, do not cite]
+        self.bitquery_url = "[invalid url, do not cite]
         self.transport = RequestsHTTPTransport(
             url=self.bitquery_url,
             headers={"X-API-KEY": config.BITQUERY_API_KEY}

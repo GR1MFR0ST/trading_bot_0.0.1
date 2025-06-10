@@ -1,27 +1,32 @@
-import asyncio
+import requests
 import pandas as pd
-from solana.rpc.websocket_api import connect
-from solana.publickey import PublicKey
 from config import Config
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
 import logging
 
 logger = logging.getLogger(__name__)
 
 class RealtimeDataFetcher:
-    """Fetches real-time market data for Solana tokens using WebSocket."""
+    """Fetches real-time market data for Solana tokens using Jupiter API and Bitquery."""
     
     def __init__(self, config: Config):
-        """Initialize fetcher with Solana WebSocket URL.
+        """Initialize fetcher with Jupiter API and Bitquery client.
         
         Args:
-            config: Config object with SOLANA_RPC_URL.
+            config: Config object with BITQUERY_API_KEY.
         """
-        self.config = config
-        self.solana_ws_url = config.SOLANA_RPC_URL.replace("https", "wss")
-        logger.info("Initialized Solana WebSocket for real-time data")
+        self.jupiter_url = "https://price.jup.ag/v4/price"
+        self.bitquery_url = "https://graphql.bitquery.io"
+        self.transport = RequestsHTTPTransport(
+            url=self.bitquery_url,
+            headers={"X-API-KEY": config.BITQUERY_API_KEY}
+        )
+        self.client = Client(transport=self.transport)
+        logger.info("Initialized Jupiter API and Bitquery for real-time data")
     
-    async def get_data(self, token_address: str) -> pd.DataFrame:
-        """Fetch real-time data for a token using WebSocket.
+    def get_data(self, token_address: str) -> pd.DataFrame:
+        """Fetch current price from Jupiter and recent volume from Bitquery.
         
         Args:
             token_address: Token mint address.
@@ -29,18 +34,38 @@ class RealtimeDataFetcher:
         Returns:
             DataFrame with latest price and volume data.
         """
-        async with connect(self.solana_ws_url) as ws:
-            subscription_id = await ws.account_subscribe(PublicKey(token_address))
-            async for msg in ws:
-                if msg['method'] == 'accountNotification':
-                    # Placeholder: Parse WebSocket message to extract price and volume
-                    # This requires DEX-specific logic (e.g., Raydium's Serum market data)
-                    data = {
-                        "timestamp": pd.Timestamp.now(),
-                        "close": 0.001,  # Replace with actual price
-                        "volume": 100    # Replace with actual volume
+        try:
+            # Get price from Jupiter
+            response = requests.get(f"{self.jupiter_url}?ids={token_address}")
+            response.raise_for_status()
+            price_data = response.json()
+            price = price_data['data'][token_address]['price']
+            
+            # Get recent volume from Bitquery (last 1 hour)
+            query = gql("""
+            query($token: String!) {
+                Solana {
+                    DEXTrades(
+                        where: { Trade: { Currency: { MintAddress: { is: $token } } }, Block: { Time: { after: "%s" } } }
+                        orderBy: { descending: Block_Time }
+                    ) {
+                        Trade { Amount }
                     }
-                    df = pd.DataFrame([data])
-                    df.set_index("timestamp", inplace=True)
-                    logger.info("Fetched real-time data for %s: $%.4f", token_address, data["close"])
-                    return df
+                }
+            }
+            """ % (pd.Timestamp.now() - pd.Timedelta(hours=1)).isoformat())
+            result = self.client.execute(query, variable_values={"token": token_address})
+            trades = result["Solana"]["DEXTrades"]
+            volume = sum(trade["Trade"]["Amount"] for trade in trades)
+            
+            df = pd.DataFrame([{
+                "timestamp": pd.Timestamp.now(),
+                "close": price,
+                "volume": volume
+            }])
+            df.set_index("timestamp", inplace=True)
+            logger.info("Fetched real-time data for %s: price $%.4f, volume %.2f", token_address, price, volume)
+            return df
+        except Exception as e:
+            logger.error("Failed to fetch real-time data for %s: %s", token_address, e)
+            return pd.DataFrame()

@@ -1,35 +1,52 @@
-import asyncio
-import logging
+from solana.rpc.async_api import AsyncClient
+from solana.publickey import PublicKey
+import pandas as pd
 from config import Config
+import logging
 
 logger = logging.getLogger(__name__)
 
-class OrderExecutor:
-    """Handles trade execution."""
+class OnchainDataFetcher:
+    """Fetches on-chain data from Solana blockchain."""
     
     def __init__(self, config: Config):
-        """Initialize executor with configuration.
+        """Initialize fetcher with Solana RPC client.
         
         Args:
-            config: Config object with API settings.
+            config: Config object with Solana RPC settings.
         """
         self.config = config
+        self.client = AsyncClient("https://api.mainnet-beta.solana.com")
+        logger.info("Initialized Solana RPC client")
     
-    async def place_order(self, asset: str, side: str, quantity: float, stop_loss: float) -> str:
-        """Place a market order with stop-loss.
+    async def get_data(self, token_address: str) -> pd.DataFrame:
+        """Fetch recent transaction data for a Solana token.
         
         Args:
-            asset: Asset symbol (e.g., 'bitcoin').
-            side: 'buy' or 'sell'.
-            quantity: Amount to trade.
-            stop_loss: Stop-loss price.
+            token_address: Token mint address.
         
         Returns:
-            Order ID (simulated).
+            DataFrame with transaction data (timestamp, price, volume).
         """
-        # Placeholder for Binance API (replace with ccxt or similar)
-        await asyncio.sleep(0.5)  # Simulate network latency
-        order_id = f"ORDER_{asset}_{side}_{int(pd.Timestamp.now().timestamp())}"
-        logger.info("Placed %s order for %s: %f units with stop-loss at $%.2f, Order ID: %s", 
-                    side, asset, quantity, stop_loss, order_id)
-        return order_id
+        try:
+            token_pubkey = PublicKey(token_address)
+            signatures = await self.client.get_signatures_for_address(token_pubkey, limit=100)
+            data = []
+            for sig in signatures["result"]:
+                tx = await self.client.get_transaction(sig["signature"])
+                if tx["result"]:
+                    amount = tx["result"]["meta"]["postTokenBalances"][0]["uiTokenAmount"]["uiAmount"] if tx["result"]["meta"]["postTokenBalances"] else 0
+                    data.append({
+                        "timestamp": pd.to_datetime(sig["blockTime"], unit="s"),
+                        "close": amount,  # Simplified; needs price conversion
+                        "high": amount,
+                        "low": amount,
+                        "volume": amount
+                    })
+            df = pd.DataFrame(data)
+            df.set_index("timestamp", inplace=True)
+            logger.info("Fetched %d on-chain transactions for %s", len(df), token_address)
+            return df
+        except Exception as e:
+            logger.error("Failed to fetch on-chain data for %s: %s", token_address, e)
+            return pd.DataFrame()

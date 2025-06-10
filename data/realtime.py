@@ -1,44 +1,67 @@
 import asyncio
-import json
-import websockets
-import ccxt
 import pandas as pd
 from config import Config
+from gql import gql, Client
+from gql.transport.aiohttp import AIOHTTPTransport
 import logging
 
 logger = logging.getLogger(__name__)
 
 class RealtimeDataFetcher:
-    """Fetches real-time market data using WebSocket."""
+    """Fetches real-time market data for Solana memecoins using Bitquery."""
+    
     def __init__(self, config: Config):
-        self.config = config
-        self.exchange = ccxt.binance({
-            'apiKey': config.BINANCE_API_KEY,
-            'secret': config.BINANCE_SECRET_KEY,
-            'enableRateLimit': True,
-        })
-
-    async def get_data(self, asset: str) -> pd.DataFrame:
-        """Fetch real-time data for an asset using WebSocket.
+        """Initialize fetcher with configuration.
         
         Args:
-            asset: Asset symbol (e.g., 'BTC/USDT').
+            config: Config object with API settings.
+        """
+        self.config = config
+        self.bitquery_url = "https://graphql.bitquery.io"
+        self.transport = AIOHTTPTransport(
+            url=self.bitquery_url,
+            headers={"X-API-KEY": config.BITQUERY_API_KEY}
+        )
+        self.client = Client(transport=self.transport)
+        logger.info("Initialized Bitquery client for real-time data")
+    
+    async def get_data(self, token_address: str, dex: str = "raydium") -> pd.DataFrame:
+        """Fetch real-time trade data for a Solana token.
+        
+        Args:
+            token_address: Token mint address.
+            dex: DEX name ('raydium' or 'pump').
         
         Returns:
-            DataFrame with latest price data.
+            DataFrame with latest trade data.
         """
-        symbol = asset.replace('/', '').upper()  # e.g., 'BTCUSDT'
-        uri = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@ticker"
-        async with websockets.connect(uri) as websocket:
-            data = await websocket.recv()
-            data = json.loads(data)
-            df = pd.DataFrame([{
-                "timestamp": pd.Timestamp.now(),
-                "close": float(data['c']),  # Last price
-                "high": float(data['h']),   # High price
-                "low": float(data['l']),    # Low price
-                "volume": float(data['v'])  # Volume
-            }])
-            df.set_index("timestamp", inplace=True)
-            logger.info("Fetched real-time data for %s: $%.2f", asset, df["close"].iloc[-1])
-            return df
+        query = gql("""
+        subscription($token: String!, $dex: String!) {
+            Solana {
+                DEXTrades(
+                    where: { Trade: { Currency: { MintAddress: { is: $token } }, Dex: { ProtocolName: { is: $dex } } }
+                    limit: { count: 1 }
+                ) {
+                    Block { Time }
+                    Trade { Price Amount }
+                }
+            }
+        }
+        """)
+        try:
+            async with self.client as session:
+                result = await session.subscribe(query, variable_values={"token": token_address, "dex": dex})
+                async for trade in result:
+                    df = pd.DataFrame([{
+                        "timestamp": pd.to_datetime(trade["Block"]["Time"]),
+                        "close": trade["Trade"]["Price"],
+                        "high": trade["Trade"]["Price"],
+                        "low": trade["Trade"]["Price"],
+                        "volume": trade["Trade"]["Amount"]
+                    }])
+                    df.set_index("timestamp", inplace=True)
+                    logger.info("Fetched real-time trade for %s on %s: $%.2f", token_address, dex, df["close"].iloc[-1])
+                    return df
+        except Exception as e:
+            logger.error("Failed to fetch real-time data for %s: %s", token_address, e)
+            return pd.DataFrame()

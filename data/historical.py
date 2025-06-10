@@ -1,29 +1,39 @@
+import pandas as pd
 from gql import gql, Client
 from gql.transport.requests import RequestsHTTPTransport
-from solana.rpc.async_api import AsyncClient
-from solana.publickey import PublicKey
-import pandas as pd
+from config import Config
+import logging
+
+logger = logging.getLogger(__name__)
 
 class HistoricalDataFetcher:
-    def __init__(self, config):
+    """Fetches historical market data for Solana tokens from Bitquery."""
+    
+    def __init__(self, config: Config):
+        """Initialize fetcher with configuration.
+        
+        Args:
+            config: Config object with BITQUERY_API_KEY.
+        """
         self.config = config
         self.bitquery_url = "https://graphql.bitquery.io"
         self.transport = RequestsHTTPTransport(
             url=self.bitquery_url,
-            headers={"X-API-KEY": config.BITQUERY_API_KEY}
+            headers={"X-API-KEY": self.config.BITQUERY_API_KEY}
         )
         self.client = Client(transport=self.transport)
-        self.solana_client = AsyncClient("https://api.mainnet-beta.solana.com")
-
-    def get_data(self, token_address, dex="raydium"):
-        if dex in ["raydium", "pumpfun"]:
-            return self._get_bitquery_data(token_address, dex)
-        elif dex == "photon":
-            return self._get_photon_data(token_address)
-        else:
-            raise ValueError(f"Unsupported DEX: {dex}")
-
-    def _get_bitquery_data(self, token_address, dex):
+        logger.info("Initialized Bitquery client for historical data")
+    
+    def get_data(self, token_address: str, dex: str = "raydium") -> pd.DataFrame:
+        """Fetch historical trade data for a Solana token.
+        
+        Args:
+            token_address: Token mint address.
+            dex: DEX name ('raydium' or 'pump').
+        
+        Returns:
+            DataFrame with historical price and volume data.
+        """
         query = gql("""
         query($token: String!, $dex: String!) {
             Solana {
@@ -38,36 +48,20 @@ class HistoricalDataFetcher:
             }
         }
         """)
-        result = self.client.execute(query, variable_values={"token": token_address, "dex": dex})
-        trades = result["Solana"]["DEXTrades"]
-        df = pd.DataFrame([
-            {
-                "timestamp": pd.to_datetime(trade["Block"]["Time"]),
-                "close": trade["Trade"]["Price"],
-                "high": trade["Trade"]["Price"],
-                "low": trade["Trade"]["Price"],
-                "volume": trade["Trade"]["Amount"]
-            }
-            for trade in trades
-        ])
-        df.set_index("timestamp", inplace=True)
-        return df
-
-    async def _get_photon_data(self, token_address):
-        token_pubkey = PublicKey(token_address)
-        signatures = await self.solana_client.get_signatures_for_address(token_pubkey, limit=100)
-        data = []
-        for sig in signatures["result"]:
-            tx = await self.solana_client.get_transaction(sig["signature"])
-            if tx["result"]:
-                amount = tx["result"]["meta"]["postTokenBalances"][0]["uiTokenAmount"]["uiAmount"] if tx["result"]["meta"]["postTokenBalances"] else 0
-                data.append({
-                    "timestamp": pd.to_datetime(sig["blockTime"], unit="s"),
-                    "close": amount,
-                    "high": amount,
-                    "low": amount,
-                    "volume": amount
-                })
-        df = pd.DataFrame(data)
-        df.set_index("timestamp", inplace=True)
-        return df
+        try:
+            result = self.client.execute(query, variable_values={"token": token_address, "dex": dex})
+            trades = result["Solana"]["DEXTrades"]
+            df = pd.DataFrame([
+                {
+                    "timestamp": pd.to_datetime(trade["Block"]["Time"]),
+                    "close": trade["Trade"]["Price"],
+                    "volume": trade["Trade"]["Amount"]
+                }
+                for trade in trades
+            ])
+            df.set_index("timestamp", inplace=True)
+            logger.info("Fetched %d historical trades for token %s on %s", len(df), token_address, dex)
+            return df
+        except Exception as e:
+            logger.error("Failed to fetch historical data for %s: %s", token_address, e)
+            return pd.DataFrame()

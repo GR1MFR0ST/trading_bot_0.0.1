@@ -51,7 +51,7 @@ class Tracker:
         trades = []
         data_history = pd.DataFrame()
         while time.time() - start_time < duration_hours * 3600:
-            data = await self.data_fetcher.get_data(token_address)
+            data = self.data_fetcher.get_data(token_address)
             if not data.empty:
                 data_history = pd.concat([data_history, data])
                 for strategy in strategies:

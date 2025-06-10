@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import logging
-from dotenv import load_dotenv
 from config import Config
 from data.historical import HistoricalDataFetcher
 from data.realtime import RealtimeDataFetcher
@@ -10,9 +9,6 @@ from tracker import Tracker
 from analyzer import Analyzer
 import backtrader as bt
 import pandas as pd
-
-# Load environment variables
-load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

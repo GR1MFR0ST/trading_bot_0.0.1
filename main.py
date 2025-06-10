@@ -1,68 +1,77 @@
+import argparse
 import asyncio
 import logging
+from dotenv import load_dotenv
 from config import Config
-from strategies.ma_crossover import MACrossoverStrategy
-from risk_management import RiskManager
-from portfolio import Portfolio
 from data.historical import HistoricalDataFetcher
 from data.realtime import RealtimeDataFetcher
-from analysis.technical import TechnicalAnalyzer
-from execution.orders import OrderExecutor
-from alerts import send_telegram_alert
-from database import DatabaseManager
+from strategies.momentum_strategy import MomentumStrategy
+from tracker import Tracker
+from analyzer import Analyzer
+import backtrader as bt
+import pandas as pd
 
-# Configure logging
+# Load environment variables
+load_dotenv()
+
+# Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 async def main():
-    """Main function to run the trading bot."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Solana Memecoin Trading Bot")
+    parser.add_argument("--ca", required=True, help="Token Contract Address")
+    parser.add_argument("--strategies", nargs="+", default=["momentum"], help="List of strategies (e.g., momentum)")
+    parser.add_argument("--track-hours", type=int, default=24, help="Hours to track the token")
+    args = parser.parse_args()
+
+    # Initialize components
     config = Config()
-    db_manager = DatabaseManager(config)
     historical_fetcher = HistoricalDataFetcher(config)
     realtime_fetcher = RealtimeDataFetcher(config)
-    technical_analyzer = TechnicalAnalyzer()
-    risk_manager = RiskManager()
-    portfolio = Portfolio(config.INITIAL_CAPITAL)
-    strategy = MACrossoverStrategy()
-    order_executor = OrderExecutor(config)
+    strategies = [MomentumStrategy()] if "momentum" in args.strategies else []
+    tracker = Tracker(realtime_fetcher)
+    analyzer = Analyzer()
 
-    logger.info("Trading bot started with initial capital: $%.2f", config.INITIAL_CAPITAL)
+    # Fetch historical data for backtesting
+    historical_data = historical_fetcher.get_data(args.ca)
+    if historical_data.empty:
+        logger.error("No historical data found for token %s", args.ca)
+        return
 
-    while True:
-        try:
-            for asset in config.ASSETS:
-                # Fetch data
-                historical_data = historical_fetcher.get_data(asset)
-                realtime_data = await realtime_fetcher.get_data(asset)
-                
-                # Analyze data
-                signals = strategy.generate_signals(historical_data)
-                atr = technical_analyzer.calculate_atr(historical_data)
-                
-                # Trading logic
-                if signals.iloc[-1]:
-                    position_size = risk_manager.calculate_position_size(portfolio.capital, atr.iloc[-1])
-                    stop_loss = risk_manager.set_stop_loss(realtime_data['close'].iloc[-1], atr.iloc[-1])
-                    
-                    # Execute trade
-                    order_id = await order_executor.place_order(asset, "buy", position_size, stop_loss)
-                    portfolio.update(asset, position_size, realtime_data['close'].iloc[-1])
-                    
-                    # Log and alert
-                    db_manager.log_trade(asset, "buy", position_size, realtime_data['close'].iloc[-1], order_id)
-                    send_telegram_alert(f"Bought {position_size:.4f} {asset} at ${realtime_data['close'].iloc[-1]:.2f}")
-                    logger.info("Trade executed: %s - Buy %f at $%.2f", asset, position_size, realtime_data['close'].iloc[-1])
-                
-                # Update portfolio value (simplified)
-                portfolio_value = portfolio.calculate_value(realtime_data)
-                db_manager.log_portfolio_value(portfolio_value)
-                
-            await asyncio.sleep(config.TRADE_INTERVAL)
-        except Exception as e:
-            logger.error("Error in main loop: %s", e)
-            send_telegram_alert(f"Bot error: {e}")
-            await asyncio.sleep(60)  # Wait before retrying
+    # Set up backtesting with backtrader
+    cerebro = bt.Cerebro()
+    cerebro.broker.set_cash(10000.0)
+    cerebro.broker.setcommission(commission=0.000005)  # Solana fee
+    cerebro.broker.set_slippage(perc=0.005)  # 0.5% slippage
+    bt_data = bt.feeds.PandasData(dataname=historical_data)
+    cerebro.adddata(bt_data)
+
+    # Define backtesting strategy
+    class BTStrategy(bt.Strategy):
+        def __init__(self):
+            self.strategy = strategies[0]
+            self.signals = self.strategy.generate_signals(historical_data)
+            self.index = 0
+
+        def next(self):
+            if self.index < len(self.signals) and self.signals.iloc[self.index]:
+                self.buy(size=0.1)  # Small position for memecoins
+            self.index += 1
+
+    cerebro.addstrategy(BTStrategy)
+    cerebro.run()
+
+    # Analyze backtesting results
+    metrics = analyzer.calculate_metrics(cerebro)
+    suggestions = analyzer.suggest_improvements(metrics)
+    logger.info("Backtesting Metrics: %s", metrics)
+    logger.info("Improvement Suggestions: %s", suggestions)
+
+    # Track token in real-time
+    trades = await tracker.track_token(args.ca, strategies, args.track_hours)
+    logger.info("Tracking completed. Trades executed: %d", len(trades))
 
 if __name__ == "__main__":
     asyncio.run(main())

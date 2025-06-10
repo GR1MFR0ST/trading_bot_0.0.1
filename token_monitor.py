@@ -9,6 +9,7 @@ from data.realtime import RealtimeDataFetcher
 from tracker import Tracker
 from analyzer import Analyzer
 import pandas as pd
+import requests
 import logging
 from datetime import datetime, timedelta
 
@@ -96,7 +97,7 @@ class TokenMonitor:
             logger.info("Token %s volume too low (%.2f SOL), skipping", token_address, recent_volume)
             return
         
-        # Check sentiment (simplified)
+        # Check sentiment
         sentiment_score = await self.get_sentiment(token_address)
         if sentiment_score < 10:
             logger.info("Token %s sentiment too low (%d posts), skipping", token_address, sentiment_score)
@@ -107,52 +108,12 @@ class TokenMonitor:
         self.active_positions.append({
             "token_address": token_address,
             "entry_price": current_price,
-            "quantity": 0.1,  # Small position
+            "quantity": 0.1,
             "entry_time": datetime.now()
         })
         logger.info("Simulated buy for %s at $%.4f", token_address, current_price)
-    
-    async def get_sentiment(self, token_address: str) -> int:
-        """Fetch sentiment score based on X posts (simplified).
         
-        Args:
-            token_address: Token mint address.
-        
-        Returns:
-            Number of recent X posts mentioning the token.
-        """
-        # Placeholder: Use X API or search for sentiment
-        return 10  # Assume 10 posts for now
-    
-    async def backtest_token(self, token_address: str, data: pd.DataFrame, strategy) -> float:
-        """Backtest a strategy on historical data.
-        
-        Args:
-            token_address: Token mint address.
-            data: Historical data DataFrame.
-            strategy: Strategy instance.
-        
-        Returns:
-            Profit from backtest.
-        """
-        cerebro = bt.Cerebro()
-        cerebro.broker.set_cash(10000.0)
-        cerebro.broker.setcommission(commission=0.000005)
-        cerebro.broker.set_slippage(perc=0.005)
-        bt_data = bt.feeds.PandasData(dataname=data)
-        cerebro.adddata(bt_data)
-        
-        class BTStrategy(bt.Strategy):
-            def __init__(self):
-                self.signals = strategy.generate_signals(data)
-                self.index = 0
-            
-            def next(self):
-                if self.index < len(self.signals) and self.signals.iloc[self.index]:
-                    self.buy(size=0.1)
-                self.index += 1
-        
-        cerebro.addstrategy(BTStrategy)
-        start_value = cerebro.broker.getvalue()
-        cerebro.run()
-        return cerebro.broker.getvalue
+        # Track token
+        trades = await self.tracker.track_token(token_address, self.strategies, 24, current_price)
+        backtest_profit = await self.backtest_token(token_address, data, self.strategies[0])
+        metrics = self.analyzer

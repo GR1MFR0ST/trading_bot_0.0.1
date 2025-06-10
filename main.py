@@ -9,6 +9,7 @@ from tracker import Tracker
 from analyzer import Analyzer
 from token_monitor import TokenMonitor
 import pandas as pd
+import backtrader as bt
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -44,6 +45,8 @@ async def main():
         suggestions = analyzer.suggest_improvements(metrics)
         logger.info("Metrics: %s", metrics)
         logger.info("Suggestions: %s", suggestions)
+        # Update strategy parameters
+        analyzer.update_strategy(strategies[0], metrics)
     else:
         # Monitor new tokens
         await monitor.run()

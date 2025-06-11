@@ -45,10 +45,9 @@ async def main():
         suggestions = analyzer.suggest_improvements(metrics)
         logger.info("Metrics: %s", metrics)
         logger.info("Suggestions: %s", suggestions)
-        # Update strategy parameters
         analyzer.update_strategy(strategies[0], metrics)
     else:
-        # Monitor new tokens
+        # Monitor trusted wallets
         await monitor.run()
 
 if __name__ == "__main__":
